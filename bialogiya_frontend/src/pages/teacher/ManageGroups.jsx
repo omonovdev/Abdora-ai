@@ -9,7 +9,10 @@ const DAYS = [
   { key: 'mon', label: 'Du' }, { key: 'tue', label: 'Se' }, { key: 'wed', label: 'Cho' },
   { key: 'thu', label: 'Pa' }, { key: 'fri', label: 'Ju' }, { key: 'sat', label: 'Sha' }, { key: 'sun', label: 'Ya' },
 ];
-const parseWeekDays = (raw) => { try { return JSON.parse(raw || '[]'); } catch { return []; } };
+const parseWeekDays = (raw) => {
+  if (Array.isArray(raw)) return raw;
+  try { return JSON.parse(raw || '[]'); } catch { return []; }
+};
 
 // Teachers can only view/enter their groups now - creating, editing, and
 // deleting groups (and adding/removing students) is reception's job.

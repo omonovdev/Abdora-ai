@@ -42,18 +42,26 @@ export default function StudentResources() {
       const resourceId = r.id;
       const res = await api.get(`/resources/${resourceId}/preview`, { responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([res.data], { type: r.mimeType || 'application/octet-stream' }));
-      return { id: resourceId, url, type: r.type || getPreviewType(r), title: r.title, filename: r.filePath || r.title };
+      return { id: resourceId, url, type: getPreviewType(r), title: r.title, filename: r.filePath || r.title };
     },
     onSuccess: (data) => setPreviewContext({ open: true, ...data }),
     onError: () => toast.error('Faylni ochib bo\'lmadi'),
   });
 
   const getPreviewType = (r) => {
-    if (r.type) return r.type;
-    if (r.filePath?.match(/\.(jpg|jpeg|png|gif|bmp|svg)$/i)) return 'image';
-    if (r.filePath?.match(/\.(mp4|webm|ogg)$/i)) return 'video';
-    if (r.filePath?.match(/\.pdf$/i)) return 'pdf';
-    return 'other';
+    const mime = r.mimeType || '';
+    if (mime === 'application/pdf') return 'pdf';
+    if (mime.startsWith('image/')) return 'image';
+    if (mime.startsWith('video/')) return 'video';
+    if (mime.startsWith('audio/')) return 'audio';
+    if (mime.startsWith('text/')) return 'text';
+    const ext = (r.filePath || '').toLowerCase();
+    if (ext.endsWith('.pdf')) return 'pdf';
+    if (/\.(jpg|jpeg|png|gif|bmp|svg|webp)$/.test(ext)) return 'image';
+    if (/\.(mp4|webm|ogg|mov)$/.test(ext)) return 'video';
+    if (/\.(mp3|wav|m4a|aac)$/.test(ext)) return 'audio';
+    if (/\.(txt|csv|md|json)$/.test(ext)) return 'text';
+    return r.type || 'other';
   };
 
   const closePreview = () => {
@@ -120,12 +128,15 @@ export default function StudentResources() {
               {previewContext.type === 'video' && (
                 <video src={previewContext.url} controls className="w-full max-h-[65vh] bg-black" />
               )}
-              {previewContext.type === 'pdf' && (
-                <iframe src={previewContext.url} title={previewContext.title} className="w-full h-[65vh]" />
+              {previewContext.type === 'audio' && (
+                <audio src={previewContext.url} controls className="w-full mt-8" />
               )}
-              {previewContext.type !== 'image' && previewContext.type !== 'video' && previewContext.type !== 'pdf' && (
+              {(previewContext.type === 'pdf' || previewContext.type === 'text') && (
+                <iframe src={previewContext.url} title={previewContext.title} className="w-full h-[65vh] bg-white rounded-xl" />
+              )}
+              {!['image', 'video', 'audio', 'pdf', 'text'].includes(previewContext.type) && (
                 <div className="text-center py-20 text-gray-500">
-                  <p>Inline preview is not available for this file type.</p>
+                  <p>Bu fayl turini brauzerda ochib bo'lmaydi. Yuklab oling.</p>
                   <button onClick={() => downloadMutation.mutate({ _id: getResourceId(resources.find((item) => getResourceId(item) === previewContext.id)), id: previewContext.id, filePath: previewContext.filename, title: previewContext.title })}
                     className="btn-primary mt-5">Download file</button>
                 </div>

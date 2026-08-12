@@ -54,6 +54,14 @@ model User {
   clonedVoiceId   String?
   clonedVoiceName String?
 
+  // Teacher payroll terms, set by the manager. `salaryShare` is the percentage
+  // of their students' fees the teacher keeps: 33 for 1/3, 50 for 50/50,
+  // 67 for 2/3. Only read when salaryType = 'percent'.
+  salaryType  String @default("percent") // percent | hourly | fixed
+  salaryShare Int    @default(50)
+  hourlyRate  Int?
+  fixedSalary Int?
+
   branches    Branch[] @relation("ReceptionBranches")
   managedBranches Branch[] @relation("ManagerBranches")
   maxBranches Int      @default(3) // only relevant for role='reception', set by admin
@@ -76,6 +84,8 @@ model User {
   resources     Resource[]
   attendances   Attendance[]
   payments      Payment[]      @relation("StudentPayments")
+  managedLeads  Lead[]         @relation("ManagerLeads")
+  expenses      Expense[]      @relation("UserExpenses")
 }
 
 model Group {
@@ -91,6 +101,12 @@ model Group {
   startTime   String?  // "HH:MM"  e.g. "09:00"
   endTime     String?  // "HH:MM"  e.g. "10:30"
   room        String?  // e.g. "101-xona", "2-kat"
+  // Course progress: how many lessons the course has in total, and the level
+  // being taught. Reception uses these to answer "how far along is this group?"
+  // when placing a new student.
+  totalLessons Int?
+  level        String?  // e.g. "Elementary", "Pre-Intermediate"
+  startDate    DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -126,6 +142,9 @@ model Branch {
 
   groups   Group[]
   teachers User[]  @relation("TeacherBranch")
+  leads    Lead[]
+  expenses Expense[]
+  payments Payment[]
 }
 
 model Lesson {
@@ -144,8 +163,12 @@ model Lesson {
   teacherId String
   teacher   User   @relation(fields: [teacherId], references: [id])
 
-  attachments Json @default("[]")
-  aiContent   Json @default("{\"status\":\"pending\"}")
+  // AI output lives in aiContent only — `content` and `attachments` are the
+  // teacher's own material and are never written by a generation job. When a
+  // teacher turns aiEnabled off, no generation runs for this lesson at all.
+  attachments Json    @default("[]")
+  aiContent   Json    @default("{\"status\":\"pending\"}")
+  aiEnabled   Boolean @default(true)
 
   homework Homework[]
   aiChats  AIChat[]
@@ -200,6 +223,9 @@ model Submission {
   finalScore  Int?
   aiGrade     Json?
   teacherGrade Json?
+  // When the student last pressed submit. Distinct from createdAt, which stays
+  // pinned to the first attempt even after a re-submission.
+  submittedAt DateTime @default(now())
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -223,6 +249,13 @@ model Test {
   isActive       Boolean   @default(true)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
+
+  // How the test was built and, for AI builds, whether generation has finished.
+  // The upload endpoint returns as soon as the row exists so the teacher is not
+  // blocked on a 60s+ model call; the client polls until aiStatus leaves 'generating'.
+  source   String  @default("manual") // manual | ai_file | file_import
+  aiStatus String  @default("ready")  // ready | generating | error
+  aiError  String?
 
   groupId   String
   group     Group  @relation(fields: [groupId], references: [id])
@@ -341,16 +374,82 @@ model Resource {
 model Payment {
   id        String   @id @default(cuid())
   month     String
+  // isPaid is kept for backwards compatibility with existing rows/UI; `status`
+  // is the source of truth because a month can be partially covered.
   isPaid    Boolean  @default(true)
+  status    String   @default("paid") // paid | partial | unpaid
+  // What the student owed this month vs what actually came in. Reception needs
+  // "to'ladi/to'lamadi" to be a number, not a boolean.
+  expectedAmount Int  @default(0)
+  amount         Int  @default(0)
+  method    String   @default("cash") // cash | click | payme | bank | other
+  // Free-text reason when the month is unpaid or short - "nimaga to'lamadi".
   note      String?
   paidAt    DateTime @default(now())
   createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 
   studentId String
   student   User   @relation("StudentPayments", fields: [studentId], references: [id])
   teacherId String
 
+  branchId  String?
+  branch    Branch? @relation(fields: [branchId], references: [id])
+
   @@unique([studentId, month])
+  @@index([month])
+  @@index([status])
+}
+
+// A prospective student tracked by the manager before they become a User.
+// Statuses drive the manager's board: new -> contacted -> trial -> enrolled,
+// with frozen/archived/lost as exits.
+model Lead {
+  id           String    @id @default(cuid())
+  name         String
+  phone        String
+  source       String    @default("other") // instagram | telegram | referral | walkin | landing | other
+  status       String    @default("new")   // new | contacted | trial | enrolled | frozen | archived | lost
+  interestedIn String?
+  note         String?
+  frozenUntil  DateTime?
+  // Set when status becomes archived/lost, so "chiqib ketganlar" can be dated.
+  closedAt     DateTime?
+  closeReason  String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  branchId  String?
+  branch    Branch? @relation(fields: [branchId], references: [id])
+  managerId String?
+  manager   User?   @relation("ManagerLeads", fields: [managerId], references: [id])
+  // Set once the lead converts into a real student account.
+  studentId String?
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+// Operating costs (rent, utilities, marketing, equipment) and one-off payouts.
+// Teacher salaries are computed from Payment rows instead - see payroll.
+model Expense {
+  id       String   @id @default(cuid())
+  category String   // rent | utilities | marketing | equipment | salary | tax | other
+  title    String
+  amount   Int
+  date     DateTime @default(now())
+  note     String?
+  method   String   @default("cash") // cash | click | payme | bank | other
+
+  branchId String?
+  branch   Branch? @relation(fields: [branchId], references: [id])
+
+  createdById String
+  createdBy   User   @relation("UserExpenses", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([date])
+  @@index([category])
 }
 
 // Public lead/application form submissions from the landing page (people

@@ -18,6 +18,33 @@ export const formatRelativeTime = (date) => {
   return formatDate(date);
 };
 
+export const formatDateTime = (date, locale = 'uz-UZ') => {
+  if (!date) return '';
+  return new Intl.DateTimeFormat(locale, {
+    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+  }).format(new Date(date));
+};
+
+// How far before/after a deadline something happened, e.g. "muddatdan 10 daqiqa
+// oldin" / "2 soat kech". Returns null when either timestamp is missing.
+export const formatDeadlineOffset = (submittedAt, dueDate) => {
+  if (!submittedAt || !dueDate) return null;
+  const diffMs = new Date(dueDate) - new Date(submittedAt);
+  const late = diffMs < 0;
+  const minutes = Math.round(Math.abs(diffMs) / 60000);
+
+  let amount;
+  if (minutes < 1) amount = 'bir daqiqa';
+  else if (minutes < 60) amount = `${minutes} daqiqa`;
+  else if (minutes < 1440) amount = `${Math.round(minutes / 60)} soat`;
+  else amount = `${Math.round(minutes / 1440)} kun`;
+
+  return {
+    late,
+    label: late ? `muddatdan ${amount} kech` : `muddatdan ${amount} oldin`,
+  };
+};
+
 export const getInitials = (name = '') =>
   name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
 

@@ -14,6 +14,8 @@ router.use('/analytics', require('./analytics.routes'));
 router.use('/admin', require('./admin.routes'));
 router.use('/reception', require('./reception.routes'));
 router.use('/payments', require('./payment.routes'));
+router.use('/finance', require('./finance.routes'));
+router.use('/leads', require('./lead.routes'));
 router.use('/speaking', require('./speaking.routes'));
 router.use('/voice', require('./voice.routes'));
 router.use('/applications', require('./application.routes'));

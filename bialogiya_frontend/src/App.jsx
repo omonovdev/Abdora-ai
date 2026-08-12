@@ -15,6 +15,12 @@ import LoginPage from './pages/auth/LoginPage';
 import StudentDashboard from './pages/student/StudentDashboard';
 import StudentLessons from './pages/student/StudentLessons';
 import LessonDetail from './pages/student/LessonDetail';
+
+// Leads CRM + Finance (manager / admin / reception)
+import ManagerLeads from './pages/manager/ManagerLeads';
+import FinanceDashboard from './pages/finance/FinanceDashboard';
+import FinanceExpenses from './pages/finance/FinanceExpenses';
+import FinancePayroll from './pages/finance/FinancePayroll';
 import StudentHomework from './pages/student/StudentHomework';
 import HomeworkSubmit from './pages/student/HomeworkSubmit';
 import StudentTests from './pages/student/StudentTests';
@@ -127,6 +133,8 @@ export default function App() {
           <Route path="lessons" element={<ManageLessons />} />
           <Route path="lessons/create" element={<CreateLesson />} />
           <Route path="lessons/:id/edit" element={<CreateLesson />} />
+          {/* Teachers open the same lesson view their students see. */}
+          <Route path="lessons/:id" element={<LessonDetail />} />
           <Route path="homework" element={<ManageHomework />} />
           <Route path="homework/create" element={<CreateHomework />} />
           <Route path="homework/:id/submissions" element={<GradeSubmissions />} />
@@ -169,6 +177,17 @@ export default function App() {
           <Route path="students" element={<AdminStudents />} />
           <Route path="groups" element={<AdminGroups />} />
           <Route path="settings" element={<AdminSettings />} />
+        </Route>
+
+        {/* Leads CRM and Finance are shared by the management roles; the backend
+            scopes every query to the branches the caller actually runs. */}
+        <Route path="/leads" element={<ProtectedRoute role={['manager', 'admin', 'reception']}><MainLayout /></ProtectedRoute>}>
+          <Route index element={<ManagerLeads />} />
+        </Route>
+        <Route path="/finance" element={<ProtectedRoute role={['manager', 'admin', 'reception']}><MainLayout /></ProtectedRoute>}>
+          <Route index element={<FinanceDashboard />} />
+          <Route path="expenses" element={<FinanceExpenses />} />
+          <Route path="payroll" element={<ProtectedRoute role={['manager', 'admin']}><FinancePayroll /></ProtectedRoute>} />
         </Route>
 
         {/* Reception Routes - has almost all of admin's operational

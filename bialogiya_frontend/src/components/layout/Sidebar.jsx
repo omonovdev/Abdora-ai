@@ -7,6 +7,7 @@ import {
   LayoutDashboard, BookOpen, ClipboardList, FileText, BarChart2,
   Users, FolderOpen, Calendar, Trophy, Star, Settings,
   GraduationCap, BookMarked, UserCheck, Upload, Mic, Wallet, UserCog, Inbox, Building2,
+  PieChart, Receipt, UserPlus,
 } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { getLevelProgress } from '../../utils/format';
@@ -40,18 +41,24 @@ const teacherLinks = [
 const adminLinks = [
   { to: '/admin/dashboard', icon: LayoutDashboard, key: 'dashboard' },
   { to: '/admin/applications', icon: Inbox, key: 'applications' },
+  { to: '/leads', icon: UserPlus, key: 'leads', label: 'Lidlar' },
   { to: '/admin/branches', icon: Building2, key: 'branches' },
   { to: '/admin/managers', icon: UserCheck, key: 'managers' },
+  { to: '/finance', icon: PieChart, key: 'finance', label: 'Moliya' },
+  { to: '/finance/payroll', icon: Receipt, key: 'payroll', label: 'Ish haqi' },
   { to: '/admin/settings', icon: Settings, key: 'settings' },
 ];
 
 const managerLinks = [
   { to: '/manager/dashboard', icon: LayoutDashboard, key: 'dashboard' },
+  { to: '/leads', icon: UserPlus, key: 'leads', label: 'Lidlar' },
   { to: '/manager/branches', icon: Building2, key: 'branches' },
   { to: '/manager/reception', icon: UserCog, key: 'reception' },
   { to: '/manager/teachers', icon: BookMarked, key: 'teachers' },
   { to: '/manager/groups', icon: Users, key: 'groups' },
   { to: '/manager/students', icon: GraduationCap, key: 'students' },
+  { to: '/finance', icon: PieChart, key: 'finance', label: 'Moliya' },
+  { to: '/finance/payroll', icon: Receipt, key: 'payroll', label: 'Ish haqi' },
   { to: '/manager/settings', icon: Settings, key: 'settings' },
 ];
 
@@ -61,6 +68,8 @@ const receptionLinks = [
   { to: '/reception/groups', icon: Users, key: 'groups' },
   { to: '/reception/students', icon: GraduationCap, key: 'students' },
   { to: '/reception/payments', icon: Wallet, key: 'payments' },
+  { to: '/leads', icon: UserPlus, key: 'leads', label: 'Lidlar' },
+  { to: '/finance', icon: PieChart, key: 'finance', label: 'Moliya' },
   { to: '/reception/settings', icon: Settings, key: 'settings' },
 ];
 
@@ -134,7 +143,7 @@ export default function Sidebar({ isOpen, onClose }) {
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto p-3 space-y-0.5">
-        {links.map(({ to, icon: Icon, key }, i) => (
+        {links.map(({ to, icon: Icon, key, label }, i) => (
           <motion.div
             key={to}
             initial={{ opacity: 0, x: -10 }}
@@ -143,11 +152,12 @@ export default function Sidebar({ isOpen, onClose }) {
           >
             <NavLink
               to={to}
+              end={to === '/finance'}
               onClick={onClose}
               className={({ isActive }) => cn('sidebar-link', isActive && 'active')}
             >
               <Icon size={16} />
-              <span>{user?.role === 'manager' && key === 'branches' ? 'Filiallar' : t(key)}</span>
+              <span>{label || (user?.role === 'manager' && key === 'branches' ? 'Filiallar' : t(key))}</span>
             </NavLink>
           </motion.div>
         ))}

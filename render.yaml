@@ -10,10 +10,9 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: postgresql://neondb_owner:npg_0vxC5sbgRmnT@ep-snowy-hall-asgw3s8r-pooler.c-4.eu-central-1.aws.neon.tech/neondb?sslmode=require
-        fromDatabase:postgresql://neondb_owner:npg_0vxC5sbgRmnT@ep-snowy-hall-asgw3s8r-pooler.c-4.eu-central-1.aws.neon.tech/neondb?sslmode=require
-          name: abdora-db
-          property: connectionString
+      # Set in the Render dashboard, never in the repo - this file is public.
+      - key: DATABASE_URL
+        sync: false
       - key: JWT_SECRET
         generateValue: true
       - key: JWT_REFRESH_SECRET

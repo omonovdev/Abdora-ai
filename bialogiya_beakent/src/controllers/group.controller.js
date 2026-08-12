@@ -17,7 +17,7 @@ const assertGroupAccess = async (groupId, user) => {
 const createGroup = async (req, res, next) => {
   try {
     const { name, description, subject, icon, color, teacherId, branchId, monthlyFee,
-            weekDays, startTime, endTime, room } = req.body;
+            weekDays, startTime, endTime, room, totalLessons, level, startDate } = req.body;
     if (!name) return error(res, 'Group name required', 400);
 
     const assignedTeacherId = req.user.role === 'teacher' ? req.user.userId : teacherId;
@@ -41,6 +41,9 @@ const createGroup = async (req, res, next) => {
         startTime: startTime || null,
         endTime: endTime || null,
         room: room || null,
+        totalLessons: totalLessons ? parseInt(totalLessons, 10) : null,
+        level: level || null,
+        startDate: startDate ? new Date(startDate) : null,
       },
       include: {
         teacher: { select: { id: true, name: true } },
@@ -76,12 +79,41 @@ const getAllGroups = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+// How far through the course a group is. An Attendance row is created once per
+// lesson actually held, so counting them is the truthful measure of progress -
+// more so than counting Lesson rows, which a teacher may create in advance.
+const buildProgress = async (group) => {
+  const [lessonsHeld, lessonsCreated, lastSession] = await Promise.all([
+    prisma.attendance.count({ where: { groupId: group.id } }),
+    prisma.lesson.count({ where: { groupId: group.id, isActive: true } }),
+    prisma.attendance.findFirst({ where: { groupId: group.id }, orderBy: { date: 'desc' }, select: { date: true } }),
+  ]);
+
+  const total = group.totalLessons || null;
+  const percent = total && total > 0 ? Math.min(100, Math.round((lessonsHeld / total) * 100)) : null;
+
+  return {
+    lessonsHeld,
+    lessonsCreated,
+    totalLessons: total,
+    percent,
+    remaining: total ? Math.max(0, total - lessonsHeld) : null,
+    lastSessionAt: lastSession?.date || null,
+    // Plain-language answer to "can I still put a new student in this group?"
+    label: percent === null
+      ? 'Kurs davomiyligi kiritilmagan'
+      : percent >= 70 ? 'Kurs oxirlab qoldi — yangi o\'quvchi qiynaladi'
+        : percent >= 40 ? 'Kurs yarmiga yetdi'
+          : 'Kurs boshida — yangi o\'quvchi qo\'shsa bo\'ladi',
+  };
+};
+
 const getGroupById = async (req, res, next) => {
   try {
     const group = await prisma.group.findUnique({
       where: { id: req.params.id },
       include: {
-        teacher: { select: { id: true, name: true } },
+        teacher: { select: { id: true, name: true, phone: true } },
         branch: { select: { id: true, name: true } },
         students: {
           where: { isActive: true },
@@ -92,7 +124,15 @@ const getGroupById = async (req, res, next) => {
       },
     });
     if (!group) return error(res, 'Group not found', 404);
-    return success(res, group);
+
+    const progress = await buildProgress(group);
+
+    return success(res, {
+      ...group,
+      // weekDays is stored as a JSON string; hand the client a real array.
+      weekDays: group.weekDays ? JSON.parse(group.weekDays) : [],
+      progress,
+    });
   } catch (err) { next(err); }
 };
 
@@ -102,7 +142,7 @@ const updateGroup = async (req, res, next) => {
     if (accessErr) return error(res, accessErr.message, accessErr.status);
 
     const { name, description, subject, icon, color, isActive, teacherId, branchId,
-            monthlyFee, weekDays, startTime, endTime, room } = req.body;
+            monthlyFee, weekDays, startTime, endTime, room, totalLessons, level, startDate } = req.body;
 
     // If reception is reassigning the group to a different branch, that
     // branch must also be one of theirs.
@@ -122,6 +162,9 @@ const updateGroup = async (req, res, next) => {
         ...(startTime !== undefined ? { startTime: startTime || null } : {}),
         ...(endTime !== undefined ? { endTime: endTime || null } : {}),
         ...(room !== undefined ? { room: room || null } : {}),
+        ...(totalLessons !== undefined ? { totalLessons: totalLessons ? parseInt(totalLessons, 10) : null } : {}),
+        ...(level !== undefined ? { level: level || null } : {}),
+        ...(startDate !== undefined ? { startDate: startDate ? new Date(startDate) : null } : {}),
       },
     });
     return success(res, group);

@@ -36,6 +36,8 @@ const getTests = async (req, res, next) => {
     if (req.user.role === 'student') {
       const user = await prisma.user.findUnique({ where: { id: req.user.userId }, select: { groupId: true } });
       if (user?.groupId) where.groupId = user.groupId;
+      // A test whose AI questions are still being written has no questions yet.
+      where.aiStatus = 'ready';
     }
     const tests = await prisma.test.findMany({
       where, orderBy: { createdAt: 'desc' },
@@ -97,7 +99,10 @@ const submitTest = async (req, res, next) => {
     setImmediate(async () => {
       try {
         const { analyzeTestResults } = require('../services/ai/gradingAI.service');
-        const aiAnalysis = await analyzeTestResults(test.questions, gradedAnswers);
+        const textOf = (questionId) => test.questions.find(q => q.id === questionId)?.text || '';
+        const wrongQuestions = gradedAnswers.filter(a => !a.isCorrect).map(a => ({ text: textOf(a.questionId) })).filter(q => q.text);
+        const correctTopics = gradedAnswers.filter(a => a.isCorrect).map(a => textOf(a.questionId)).filter(Boolean);
+        const aiAnalysis = await analyzeTestResults(test.title, wrongQuestions, correctTopics, 'uz');
         await prisma.result.update({ where: { id: result.id }, data: { aiAnalysis } });
       } catch (_) {}
     });
@@ -129,6 +134,95 @@ const getMyResults = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+// GET /tests/:id/analysis — per-question error rates for the whole group, plus
+// an AI read of what the group misunderstood. Teacher/admin only.
+const getTestAnalysis = async (req, res, next) => {
+  try {
+    const test = await prisma.test.findUnique({
+      where: { id: req.params.id },
+      include: { questions: true, group: { select: { id: true, name: true } } },
+    });
+    if (!test) return error(res, 'Test not found', 404);
+    if (req.user.role === 'teacher' && test.teacherId !== req.user.userId) {
+      return error(res, 'Not authorized for this test', 403);
+    }
+
+    const results = await prisma.result.findMany({
+      where: { testId: test.id },
+      select: { answers: true, percentage: true },
+    });
+
+    if (results.length === 0) {
+      return success(res, {
+        testId: test.id, title: test.title, group: test.group,
+        participants: 0, classAverage: 0, questions: [], insights: null,
+      });
+    }
+
+    const classAverage = Math.round(results.reduce((s, r) => s + (r.percentage || 0), 0) / results.length);
+
+    const questionStats = test.questions.map(q => {
+      const opts = Array.isArray(q.options) ? q.options : [];
+      const correctAnswer = opts.find(o => o.isCorrect)?.text || null;
+
+      let attempts = 0;
+      let wrong = 0;
+      const wrongChoices = {};
+
+      results.forEach(r => {
+        const answers = Array.isArray(r.answers) ? r.answers : [];
+        const given = answers.find(a => a.questionId === q.id);
+        if (!given) return;
+        attempts += 1;
+        if (given.isCorrect) return;
+        wrong += 1;
+        const choice = given.answer || "Javob berilmagan";
+        wrongChoices[choice] = (wrongChoices[choice] || 0) + 1;
+      });
+
+      const topWrongAnswer = Object.entries(wrongChoices).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+
+      return {
+        questionId: q.id,
+        text: q.text,
+        difficulty: q.difficulty,
+        correctAnswer,
+        attempts,
+        wrong,
+        correct: attempts - wrong,
+        errorRate: attempts > 0 ? Math.round((wrong / attempts) * 100) : 0,
+        topWrongAnswer,
+        wrongChoices,
+      };
+    }).sort((a, b) => b.errorRate - a.errorRate || b.wrong - a.wrong);
+
+    // Cache keyed on the number of results so a new submission busts it.
+    const cache = require('../utils/simpleCache');
+    const cacheKey = `test-insights:${test.id}:${results.length}`;
+    let insights = cache.get(cacheKey);
+
+    if (!insights) {
+      const { analyzeTestForTeacher } = require('../services/ai/gradingAI.service');
+      // Only the questions students actually got wrong are worth advice.
+      const hardest = questionStats.filter(q => q.wrong > 0).slice(0, 8);
+      insights = hardest.length > 0
+        ? await analyzeTestForTeacher(test.title, hardest, classAverage, req.query.language || 'uz')
+        : null;
+      if (insights) cache.set(cacheKey, insights, 30 * 60 * 1000);
+    }
+
+    return success(res, {
+      testId: test.id,
+      title: test.title,
+      group: test.group,
+      participants: results.length,
+      classAverage,
+      questions: questionStats,
+      insights,
+    });
+  } catch (err) { next(err); }
+};
+
 const deleteTest = async (req, res, next) => {
   try {
     const test = await prisma.test.findFirst({ where: { id: req.params.id, teacherId: req.user.userId } });
@@ -139,4 +233,4 @@ const deleteTest = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-module.exports = { createTest, getTests, getTestById, submitTest, getTestResults, getMyResults, deleteTest };
+module.exports = { createTest, getTests, getTestById, submitTest, getTestResults, getMyResults, getTestAnalysis, deleteTest };

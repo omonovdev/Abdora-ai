@@ -34,7 +34,9 @@ const getTeachers = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-// So reception can pick a group to view/mark payments for.
+// So reception can pick a group to view/mark payments for. Schedule and course
+// progress ride along so reception can answer "where is this group up to?"
+// without opening each one.
 const getGroups = async (req, res, next) => {
   try {
     const where = req.user.role === 'reception' ? { branch: { receptionId: req.user.userId } } : {};
@@ -42,12 +44,38 @@ const getGroups = async (req, res, next) => {
       where: { ...where, isActive: true },
       select: {
         id: true, name: true, subject: true, monthlyFee: true,
-        teacher: { select: { name: true } }, branch: { select: { id: true, name: true } },
+        weekDays: true, startTime: true, endTime: true, room: true,
+        totalLessons: true, level: true, startDate: true,
+        teacher: { select: { id: true, name: true } }, branch: { select: { id: true, name: true } },
         _count: { select: { students: true } },
       },
       orderBy: { name: 'asc' },
     });
-    return success(res, groups);
+
+    // One grouped count instead of a query per group.
+    const heldCounts = await prisma.attendance.groupBy({
+      by: ['groupId'],
+      where: { groupId: { in: groups.map(g => g.id) } },
+      _count: { _all: true },
+    });
+    const heldByGroup = Object.fromEntries(heldCounts.map(row => [row.groupId, row._count._all]));
+
+    const withProgress = groups.map(g => {
+      const lessonsHeld = heldByGroup[g.id] || 0;
+      const percent = g.totalLessons > 0 ? Math.min(100, Math.round((lessonsHeld / g.totalLessons) * 100)) : null;
+      return {
+        ...g,
+        weekDays: g.weekDays ? JSON.parse(g.weekDays) : [],
+        progress: {
+          lessonsHeld,
+          totalLessons: g.totalLessons,
+          percent,
+          remaining: g.totalLessons ? Math.max(0, g.totalLessons - lessonsHeld) : null,
+        },
+      };
+    });
+
+    return success(res, withProgress);
   } catch (err) { next(err); }
 };
 

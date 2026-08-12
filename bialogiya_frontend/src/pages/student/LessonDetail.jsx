@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import api from '../../config/axios';
 import toast from 'react-hot-toast';
+import { useAuthStore } from '../../store/authStore';
 import StoryAudioPlayer from '../../components/ai/StoryAudioPlayer';
 import ExplainerVideoPlayer from '../../components/ai/ExplainerVideoPlayer';
 import SpeakingPractice from '../../components/ai/SpeakingPractice';
@@ -389,6 +390,7 @@ function AIChatSection({ lessonId, i18nLanguage }) {
 export default function LessonDetail() {
   const { id } = useParams();
   const { t, i18n } = useTranslation();
+  const { user } = useAuthStore();
   const [activeTab, setActiveTab] = useState('overview');
   const queryClient = useQueryClient();
 
@@ -437,7 +439,7 @@ export default function LessonDetail() {
     <div className="max-w-4xl mx-auto space-y-4">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <Link to="/student/lessons" className="btn-ghost p-2 rounded-xl">
+        <Link to={user?.role === 'teacher' ? '/teacher/lessons' : '/student/lessons'} className="btn-ghost p-2 rounded-xl">
           <ArrowLeft size={18} />
         </Link>
         <div className="flex-1">

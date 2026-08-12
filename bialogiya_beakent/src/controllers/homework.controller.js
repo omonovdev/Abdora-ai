@@ -85,7 +85,8 @@ const submitHomework = async (req, res, next) => {
     if (!hw) return error(res, 'Homework not found', 404);
 
     const filePaths = await saveFilesAsAttachments(req.files);
-    const isLate = new Date() > new Date(hw.dueDate);
+    const submittedAt = new Date();
+    const isLate = submittedAt > new Date(hw.dueDate);
 
     const existing = await prisma.submission.findUnique({
       where: { homeworkId_studentId: { homeworkId, studentId: req.user.userId } },
@@ -95,11 +96,11 @@ const submitHomework = async (req, res, next) => {
     if (existing) {
       submission = await prisma.submission.update({
         where: { id: existing.id },
-        data: { answerText, filePaths, isLate, status: 'submitted' },
+        data: { answerText, filePaths, isLate, submittedAt, status: 'submitted' },
       });
     } else {
       submission = await prisma.submission.create({
-        data: { homeworkId, studentId: req.user.userId, answerText, filePaths, isLate, status: 'submitted' },
+        data: { homeworkId, studentId: req.user.userId, answerText, filePaths, isLate, submittedAt, status: 'submitted' },
       });
       // Award XP
       try {
@@ -128,8 +129,13 @@ const getSubmissions = async (req, res, next) => {
     const { homeworkId } = req.params;
     const subs = await prisma.submission.findMany({
       where: { homeworkId },
-      include: { student: { select: { id: true, name: true, username: true } } },
-      orderBy: { createdAt: 'desc' },
+      include: {
+        student: { select: { id: true, name: true, username: true } },
+        // dueDate lets the teacher UI show how long before/after the deadline
+        // each student actually submitted.
+        homework: { select: { id: true, title: true, dueDate: true, maxScore: true } },
+      },
+      orderBy: { submittedAt: 'desc' },
     });
     return success(res, subs);
   } catch (err) { next(err); }

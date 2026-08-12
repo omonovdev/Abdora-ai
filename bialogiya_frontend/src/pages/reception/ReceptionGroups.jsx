@@ -17,7 +17,7 @@ const formatSchedule = (g) => {
   const parts = [];
   if (g.weekDays) {
     try {
-      const days = JSON.parse(g.weekDays);
+      const days = Array.isArray(g.weekDays) ? g.weekDays : JSON.parse(g.weekDays);
       const labels = days.map(d => DAYS.find(x => x.key === d)?.label).filter(Boolean);
       if (labels.length) parts.push(labels.join(', '));
     } catch {}
@@ -27,7 +27,7 @@ const formatSchedule = (g) => {
   return parts.join(' · ');
 };
 
-const EMPTY_FORM = { name: '', subject: 'other', teacherId: '', branchId: '', monthlyFee: '', weekDays: [], startTime: '', endTime: '', room: '' };
+const EMPTY_FORM = { name: '', subject: 'other', teacherId: '', branchId: '', monthlyFee: '', weekDays: [], startTime: '', endTime: '', room: '', level: '', totalLessons: '' };
 
 const groupToForm = (g) => ({
   name: g.name || '',
@@ -35,10 +35,14 @@ const groupToForm = (g) => ({
   teacherId: g.teacher?.id || g.teacherId || '',
   branchId: g.branch?.id || g.branchId || '',
   monthlyFee: g.monthlyFee ? String(g.monthlyFee) : '',
-  weekDays: (() => { try { return JSON.parse(g.weekDays || '[]'); } catch { return []; } })(),
+  weekDays: Array.isArray(g.weekDays)
+    ? g.weekDays
+    : (() => { try { return JSON.parse(g.weekDays || '[]'); } catch { return []; } })(),
   startTime: g.startTime || '',
   endTime: g.endTime || '',
   room: g.room || '',
+  level: g.level || '',
+  totalLessons: g.totalLessons ? String(g.totalLessons) : '',
 });
 
 export default function ReceptionGroups() {
@@ -73,13 +77,20 @@ export default function ReceptionGroups() {
 
   const closeModal = () => { setShowModal(false); setEditingGroup(null); setForm(EMPTY_FORM); };
 
+  const toPayload = (d) => ({
+    ...d,
+    monthlyFee: d.monthlyFee ? Number(d.monthlyFee) : null,
+    totalLessons: d.totalLessons ? Number(d.totalLessons) : null,
+    level: d.level?.trim() || null,
+  });
+
   const createMutation = useMutation({
-    mutationFn: (d) => api.post('/groups', { ...d, monthlyFee: d.monthlyFee ? Number(d.monthlyFee) : null }),
+    mutationFn: (d) => api.post('/groups', toPayload(d)),
     onSuccess: () => { qc.invalidateQueries(['reception-groups']); closeModal(); },
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => api.put(`/groups/${id}`, { ...data, monthlyFee: data.monthlyFee ? Number(data.monthlyFee) : null }),
+    mutationFn: ({ id, data }) => api.put(`/groups/${id}`, toPayload(data)),
     onSuccess: () => { qc.invalidateQueries(['reception-groups']); closeModal(); },
   });
 
@@ -147,6 +158,19 @@ export default function ReceptionGroups() {
                 <div className="text-xs text-primary/80 mt-0.5 flex items-center gap-1">
                   <Calendar size={10} />
                   {formatSchedule(g)}
+                </div>
+              )}
+              {g.progress?.percent !== null && g.progress?.percent !== undefined && (
+                <div className="mt-1.5 flex items-center gap-2">
+                  <div className="h-1 flex-1 max-w-[140px] overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+                    <div className={`h-full rounded-full ${
+                      g.progress.percent >= 70 ? 'bg-red-500'
+                        : g.progress.percent >= 40 ? 'bg-amber-400' : 'bg-green-500'}`}
+                      style={{ width: `${g.progress.percent}%` }} />
+                  </div>
+                  <span className="text-xs text-gray-400">
+                    {g.level ? `${g.level} · ` : ''}{g.progress.percent}% o'tildi
+                  </span>
                 </div>
               )}
             </div>
@@ -251,6 +275,20 @@ export default function ReceptionGroups() {
                   <label className="block text-sm font-medium mb-1.5">Oylik to'lov (so'm)</label>
                   <input value={form.monthlyFee} onChange={e => setForm(f => ({ ...f, monthlyFee: e.target.value.replace(/\D/g, '') }))}
                     placeholder="Masalan: 500000" inputMode="numeric" className="input-field" />
+                </div>
+
+                {/* Course length drives the "kurs qayerga yetdi" progress bar. */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium mb-1.5">Daraja</label>
+                    <input value={form.level} onChange={e => setForm(f => ({ ...f, level: e.target.value }))}
+                      placeholder="Elementary" className="input-field" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1.5">Jami darslar</label>
+                    <input value={form.totalLessons} onChange={e => setForm(f => ({ ...f, totalLessons: e.target.value.replace(/\D/g, '') }))}
+                      placeholder="Masalan: 48" inputMode="numeric" className="input-field" />
+                  </div>
                 </div>
 
                 <div className="flex gap-3 pt-1">

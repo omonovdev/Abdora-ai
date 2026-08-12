@@ -108,13 +108,15 @@ Be fair, specific, and constructive. If the answer is mostly correct, reward it 
 
 const getResultAnalysisPrompt = (testTitle, wrongQuestions, correctTopics, language = 'uz') => {
   const langNote = language === 'uz' ? "O'zbek tilida javob bering." : language === 'ru' ? 'На русском языке.' : 'In English.';
+  const wrong = Array.isArray(wrongQuestions) ? wrongQuestions : [];
+  const correct = Array.isArray(correctTopics) ? correctTopics : [];
   return `${langNote}
 You are analyzing a student's test results for "${testTitle}".
 
 Questions answered incorrectly:
-${wrongQuestions.map((q, i) => `${i + 1}. ${q.text} (Topic: ${q.topic || 'General'})`).join('\n')}
+${wrong.map((q, i) => `${i + 1}. ${q.text} (Topic: ${q.topic || 'General'})`).join('\n') || 'None'}
 
-Topics answered correctly: ${correctTopics.join(', ') || 'None'}
+Topics answered correctly: ${correct.join(', ') || 'None'}
 
 Analyze the results and respond in JSON:
 {
@@ -127,6 +129,48 @@ Analyze the results and respond in JSON:
     "day3": "<what to study>"
   }
 }`;
+};
+
+// Teacher-facing: which questions the group as a whole got wrong, and what the
+// teacher should re-teach because of it.
+const getTestInsightsPrompt = (testTitle, questionStats, classAverage, language = 'uz') => {
+  const langNote = language === 'uz'
+    ? "O'zbek tilida javob bering."
+    : language === 'ru' ? 'На русском языке.' : 'In English.';
+
+  const rows = questionStats.map((q, i) => (
+    `${i + 1}. "${q.text}"
+   - To'g'ri javob: ${q.correctAnswer || '—'}
+   - ${q.attempts} ta o'quvchidan ${q.wrong} tasi xato qildi (${q.errorRate}%)
+   - Eng ko'p tanlangan noto'g'ri variant: ${q.topWrongAnswer || '—'}`
+  )).join('\n');
+
+  return `${langNote}
+
+You are an educational analyst advising the TEACHER (not the student) about how a
+whole group performed on the test "${testTitle}". Class average: ${classAverage}%.
+
+Per-question results, hardest first:
+${rows}
+
+Work out what the pattern of wrong answers says about what the group misunderstood.
+Pay attention to which distractor students picked - it usually reveals the specific
+misconception. Respond in JSON:
+{
+  "headline": "one sentence telling the teacher the single most important takeaway",
+  "weakTopics": ["<topic the group struggled with>", "..."],
+  "misconceptions": [
+    {"question": "<short reference to the question>", "misconception": "<what the students appear to believe wrongly, inferred from the distractor they chose>", "fix": "<how the teacher should re-explain it>"}
+  ],
+  "reteachPlan": ["<concrete next-lesson action 1>", "<action 2>", "<action 3>"],
+  "questionQualityFlags": ["<any question that looks ambiguous or badly worded, and why - empty array if none>"]
+}
+
+Rules:
+- Base every claim on the numbers above; do not invent results.
+- Focus on the questions with the highest error rate.
+- Keep it practical - the teacher should know what to do in the next lesson.
+- Plain text only, no markdown.`;
 };
 
 const getExplainerVideoPrompt = (title, content, language = 'uz') => {
@@ -167,6 +211,55 @@ Rules:
 - Do not use markdown syntax anywhere (no **bold**, no # headers, no "- " list markers) - plain text only in every field.`;
 };
 
+// Business-facing: reads the centre's own numbers and tells the owner what to do.
+const getFinanceAdvicePrompt = (summary, month) => {
+  const fmt = (n) => new Intl.NumberFormat('uz-UZ').format(n || 0);
+
+  const history = summary.series
+    .map(s => `${s.month}: daromad ${fmt(s.income)}, xarajat ${fmt(s.expense)}, foyda ${fmt(s.profit)}`)
+    .join('\n');
+
+  const categories = Object.entries(summary.expensesByCategory || {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([c, v]) => `${c}: ${fmt(v)}`)
+    .join(', ') || 'xarajat kiritilmagan';
+
+  const methods = Object.entries(summary.incomeByMethod || {})
+    .map(([m, v]) => `${m}: ${fmt(v)}`)
+    .join(', ') || 'to\'lov yozuvi yo\'q';
+
+  return `O'zbek tilida javob bering.
+
+Siz o'quv markazining moliyaviy maslahatchisisiz. Quyida markazning haqiqiy raqamlari
+(so'mda). Faqat shu raqamlarga tayanib xulosa chiqaring - o'zingizdan raqam o'ylab
+topmang.
+
+Oy: ${month}
+
+Oxirgi oylar:
+${history}
+
+Joriy oy xarajatlari toifalar bo'yicha: ${categories}
+Joriy oy tushumlari to'lov turi bo'yicha: ${methods}
+Yig'ilmagan qarzdorlik: ${fmt(summary.outstanding)}
+O'tgan oyga nisbatan: daromad ${summary.change?.income ?? '—'}%, xarajat ${summary.change?.expense ?? '—'}%
+
+JSON formatida javob bering:
+{
+  "headline": "bitta jumlada eng muhim xulosa",
+  "health": "good | warning | critical",
+  "observations": ["raqamlarga asoslangan aniq kuzatuv 1", "kuzatuv 2", "kuzatuv 3"],
+  "risks": [{"risk": "xavf nima", "why": "qaysi raqam buni ko'rsatyapti"}],
+  "actions": [{"action": "aniq qadam", "impact": "qanday natija kutiladi"}],
+  "debtAdvice": "qarzdorlik bo'yicha aniq tavsiya"
+}
+
+Qoidalar:
+- Har bir gap yuqoridagi raqamdan kelib chiqsin, raqamni ayting.
+- Agar ma'lumot kam bo'lsa, buni ochiq ayting - taxmin qilmang.
+- Markdown ishlatmang, oddiy matn.`;
+};
+
 const getSpeakingCoachInstructions = (topic, language = 'uz', level = 'intermediate') => {
   const langNote = {
     uz: "Talaba bilan asosan O'zbek tilida gaplashing, lekin agar mavzu chet tili (masalan ingliz tili) bo'lsa, o'sha tilda gapirtiring.",
@@ -187,4 +280,4 @@ Your job:
 - Keep each of your turns short (1-3 sentences) so the student talks more than you do.`;
 };
 
-module.exports = { LESSON_SYSTEM_PROMPT, getLessonGenerationPrompt, getChatSystemPrompt, getGradingPrompt, getResultAnalysisPrompt, getExplainerVideoPrompt, getSpeakingCoachInstructions };
+module.exports = { LESSON_SYSTEM_PROMPT, getLessonGenerationPrompt, getChatSystemPrompt, getGradingPrompt, getResultAnalysisPrompt, getTestInsightsPrompt, getFinanceAdvicePrompt, getExplainerVideoPrompt, getSpeakingCoachInstructions };

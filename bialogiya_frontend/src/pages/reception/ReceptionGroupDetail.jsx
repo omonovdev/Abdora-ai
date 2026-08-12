@@ -13,7 +13,10 @@ const DAYS = [
   { key: 'thu', label: 'Payshanba' }, { key: 'fri', label: 'Juma' }, { key: 'sat', label: 'Shanba' }, { key: 'sun', label: 'Yakshanba' },
 ];
 
+// The group detail endpoint returns weekDays already parsed; list endpoints
+// still hand back the raw JSON string.
 const parseWeekDays = (raw) => {
+  if (Array.isArray(raw)) return raw;
   try { return JSON.parse(raw || '[]'); } catch { return []; }
 };
 import api from '../../config/axios';
@@ -175,6 +178,58 @@ export default function ReceptionGroupDetail() {
           <Plus size={15} /> O'quvchi qo'shish
         </button>
       </div>
+
+      {/* Course progress — the thing reception checks before placing a new
+          student into an already-running group. */}
+      {group?.progress && (
+        <section aria-labelledby="progress-heading" className="card mb-5">
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <h2 id="progress-heading" className="font-bold text-gray-800 dark:text-white">Kurs qayerga yetdi</h2>
+              <p className="text-xs text-gray-400">
+                {group.level ? `${group.level} · ` : ''}
+                {group.progress.lessonsHeld} ta dars o'tildi
+                {group.progress.totalLessons ? ` / ${group.progress.totalLessons}` : ''}
+                {group.progress.remaining !== null && ` · ${group.progress.remaining} ta qoldi`}
+              </p>
+            </div>
+            {group.progress.percent !== null && (
+              <span className={`badge ${
+                group.progress.percent >= 70 ? 'bg-red-100 text-red-600 dark:bg-red-500/10 dark:text-red-400'
+                  : group.progress.percent >= 40 ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'
+                    : 'bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400'}`}>
+                {group.progress.percent}%
+              </span>
+            )}
+          </div>
+
+          {group.progress.percent === null ? (
+            <p className="rounded-xl bg-gray-50 p-3 text-xs text-gray-500 dark:bg-gray-800/50">
+              Kursda jami nechta dars borligi kiritilmagan — guruhni tahrirlab "Jami darslar" ni belgilang,
+              shunda foiz avtomatik hisoblanadi.
+            </p>
+          ) : (
+            <>
+              <div
+                role="progressbar" aria-valuenow={group.progress.percent} aria-valuemin={0} aria-valuemax={100}
+                aria-label="Kurs progressi"
+                className="h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+                <div className={`h-full rounded-full transition-all duration-500 motion-reduce:transition-none ${
+                  group.progress.percent >= 70 ? 'bg-red-500'
+                    : group.progress.percent >= 40 ? 'bg-amber-400' : 'bg-green-500'}`}
+                  style={{ width: `${group.progress.percent}%` }} />
+              </div>
+              <p className="mt-2 text-xs text-gray-500">{group.progress.label}</p>
+            </>
+          )}
+
+          {group.progress.lastSessionAt && (
+            <p className="mt-2 text-xs text-gray-400">
+              Oxirgi dars: {new Date(group.progress.lastSessionAt).toLocaleDateString('uz-UZ')}
+            </p>
+          )}
+        </section>
+      )}
 
       {/* Lessons + Materials summary */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">

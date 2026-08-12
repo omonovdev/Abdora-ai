@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Copy, X, GraduationCap, Phone, Users, Star, Zap, Pencil, Trash2, Save, ChevronRight } from 'lucide-react';
+import { Copy, X, GraduationCap, Phone, Users, Star, Zap, Pencil, Trash2, Save, ChevronRight, Search } from 'lucide-react';
 import api from '../../config/axios';
 import toast from 'react-hot-toast';
 
@@ -13,6 +13,8 @@ export default function ManageStudents() {
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [editingStudent, setEditingStudent] = useState(null);
   const [editForm, setEditForm] = useState({});
+  const [search, setSearch] = useState('');
+  const [groupFilter, setGroupFilter] = useState('');
 
   const { data: students } = useQuery({
     queryKey: ['my-students'],
@@ -56,6 +58,14 @@ export default function ManageStudents() {
 
   const copy = (text) => { navigator.clipboard.writeText(text); toast.success('Nusxalandi!'); };
 
+  const query = search.trim().toLowerCase();
+  const filteredStudents = (students || []).filter(s => {
+    if (groupFilter && s.group?.id !== groupFilter) return false;
+    if (!query) return true;
+    return [s.name, s.username, s.phone, s.group?.name]
+      .some(field => String(field || '').toLowerCase().includes(query));
+  });
+
   const openEdit = (s, e) => {
     e.stopPropagation();
     setEditingStudent(s.id);
@@ -76,13 +86,31 @@ export default function ManageStudents() {
 
   return (
     <div className="max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold text-gray-800 dark:text-white">O'quvchilar</h1>
+        <span className="text-sm text-gray-400">{filteredStudents.length} ta</span>
+      </div>
+
+      <div className="flex flex-col sm:flex-row gap-2 mb-4">
+        <div className="relative flex-1">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Ism, login, telefon yoki guruh bo'yicha qidiring..."
+            className="input-field pl-9 pr-9" />
+          {search && (
+            <button onClick={() => setSearch('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"><X size={14} /></button>
+          )}
+        </div>
+        <select value={groupFilter} onChange={e => setGroupFilter(e.target.value)} className="input-field sm:w-52">
+          <option value="">Barcha guruhlar</option>
+          {groups?.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+        </select>
       </div>
 
       {/* Student list */}
       <div className="space-y-2">
-        {students?.map((s, i) => {
+        {filteredStudents.map((s, i) => {
           const isEditing = editingStudent === s.id;
           return (
             <motion.div key={s.id}
@@ -164,10 +192,12 @@ export default function ManageStudents() {
             </motion.div>
           );
         })}
-        {students?.length === 0 && (
+        {filteredStudents.length === 0 && (
           <div className="text-center py-16 text-gray-400">
             <GraduationCap size={36} className="mx-auto mb-3 opacity-30" />
-            <p>Hali o'quvchilar yo'q. Birinchi o'quvchini qo'shing!</p>
+            {students?.length > 0
+              ? <p>Qidiruv bo'yicha o'quvchi topilmadi.</p>
+              : <p>Hali o'quvchilar yo'q. Birinchi o'quvchini qo'shing!</p>}
           </div>
         )}
       </div>

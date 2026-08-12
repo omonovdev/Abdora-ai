@@ -1,5 +1,5 @@
 const { getModel } = require('../../config/gemini');
-const { getGradingPrompt, getResultAnalysisPrompt } = require('./prompts');
+const { getGradingPrompt, getResultAnalysisPrompt, getTestInsightsPrompt } = require('./prompts');
 
 const gradeHomework = async (homeworkTitle, description, studentAnswer, maxScore = 100) => {
   try {
@@ -25,4 +25,16 @@ const analyzeTestResults = async (testTitle, wrongQuestions, correctTopics, lang
   }
 };
 
-module.exports = { gradeHomework, analyzeTestResults };
+const analyzeTestForTeacher = async (testTitle, questionStats, classAverage, language = 'uz') => {
+  try {
+    const prompt = getTestInsightsPrompt(testTitle, questionStats, classAverage, language);
+    const model = getModel(true);
+    const result = await model.generateContent(prompt);
+    return JSON.parse(result.response.text());
+  } catch (err) {
+    console.error('Test insights error:', err.message);
+    return null;
+  }
+};
+
+module.exports = { gradeHomework, analyzeTestResults, analyzeTestForTeacher };
