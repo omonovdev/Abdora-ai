@@ -3,7 +3,7 @@ const router = express.Router();
 const { verifyToken, requireRole } = require('../middleware/auth.middleware');
 const {
   createStudent, createTeacher, createManager, getManagers, updateManager, deleteManager, getManagerBranches, getAllUsers, getStudentsByTeacher, getUserById,
-  updateUser, updateProfile, deleteUser, resetStudentPassword, freezeStudent, changePassword
+  updateUser, updateProfile, deleteUser, resetStudentPassword, freezeStudent, changePassword, getMyBranchOptions
 } = require('../controllers/user.controller');
 
 router.get('/', verifyToken, requireRole('admin', 'reception', 'manager'), getAllUsers);
@@ -18,6 +18,7 @@ router.get('/managers/list', verifyToken, requireRole('admin'), getManagers);
 router.put('/managers/:id', verifyToken, requireRole('admin'), updateManager);
 router.delete('/managers/:id', verifyToken, requireRole('admin'), deleteManager);
 router.get('/manager/branches', verifyToken, requireRole('manager'), getManagerBranches);
+router.get('/my-branches', verifyToken, requireRole('admin', 'reception', 'manager'), getMyBranchOptions);
 router.put('/profile', verifyToken, updateProfile);
 router.post('/change-password', verifyToken, changePassword);
 router.get('/:id', verifyToken, requireRole('admin', 'reception', 'manager'), getUserById);

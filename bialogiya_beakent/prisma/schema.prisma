@@ -34,6 +34,12 @@ model User {
   age              Int?
   address          String?
   language         Language  @default(uz)
+  // Present in the database but previously missing from this schema. Kept
+  // declared so `prisma db push` never drops them.
+  birthDate            DateTime?
+  residence            String?
+  studyLocation        String?
+  alternativeWorkplace String?
   xp               Int       @default(0)
   coins            Int       @default(0)
   level            Int       @default(1)
@@ -86,6 +92,8 @@ model User {
   payments      Payment[]      @relation("StudentPayments")
   managedLeads  Lead[]         @relation("ManagerLeads")
   expenses      Expense[]      @relation("UserExpenses")
+  // The CRM lead this student was converted from, if any.
+  sourceLead    Lead?          @relation("LeadStudent")
 }
 
 model Group {
@@ -423,11 +431,14 @@ model Lead {
   branch    Branch? @relation(fields: [branchId], references: [id])
   managerId String?
   manager   User?   @relation("ManagerLeads", fields: [managerId], references: [id])
-  // Set once the lead converts into a real student account.
-  studentId String?
+  // Set once the lead converts into a real student account. Kept as SetNull so
+  // deactivating a student never destroys the CRM history of how they arrived.
+  studentId String? @unique
+  student   User?   @relation("LeadStudent", fields: [studentId], references: [id], onDelete: SetNull)
 
   @@index([status])
   @@index([createdAt])
+  @@index([branchId])
 }
 
 // Operating costs (rent, utilities, marketing, equipment) and one-off payouts.

@@ -3,12 +3,15 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Plus, Search, X, Phone, UserPlus, Snowflake, Archive, TrendingUp, Trash2,
+  GraduationCap, Link2Off, Copy, Check,
 } from 'lucide-react';
 import api from '../../config/axios';
 import toast from 'react-hot-toast';
 import { RowSkeleton, Skeleton } from '../../components/ui/Skeleton';
 import ErrorState from '../../components/ui/ErrorState';
 import EmptyState from '../../components/ui/EmptyState';
+import BranchSelect from '../../components/ui/BranchSelect';
+import { useBranchStore } from '../../store/branchStore';
 
 const STATUSES = [
   { value: 'new', label: 'Yangi', tone: 'bg-blue-100 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400' },
@@ -51,16 +54,23 @@ export default function ManagerLeads() {
   const [search, setSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
+  const [convertLead, setConvertLead] = useState(null);
+  const branchId = useBranchStore(s => s.branchId);
 
+  // Every lead query carries the selected center, so a manager running several
+  // centers never sees another center's leads mixed into this board.
   const statsQuery = useQuery({
-    queryKey: ['lead-stats'],
-    queryFn: () => api.get('/leads/stats').then(r => r.data.data),
+    queryKey: ['lead-stats', branchId],
+    queryFn: () => api.get('/leads/stats', { params: { branchId: branchId || undefined } }).then(r => r.data.data),
+    enabled: !!branchId,
   });
 
   const leadsQuery = useQuery({
-    queryKey: ['leads', tab, search],
-    queryFn: () => api.get('/leads', { params: { status: tab, search: search.trim() || undefined } })
-      .then(r => r.data.data),
+    queryKey: ['leads', branchId, tab, search],
+    queryFn: () => api.get('/leads', {
+      params: { status: tab, search: search.trim() || undefined, branchId: branchId || undefined },
+    }).then(r => r.data.data),
+    enabled: !!branchId,
   });
 
   const invalidate = () => {
@@ -69,7 +79,7 @@ export default function ManagerLeads() {
   };
 
   const createMutation = useMutation({
-    mutationFn: (payload) => api.post('/leads', payload),
+    mutationFn: (payload) => api.post('/leads', { ...payload, branchId }),
     onSuccess: () => {
       invalidate();
       toast.success('Lid qo\'shildi');
@@ -91,6 +101,12 @@ export default function ManagerLeads() {
     onError: (e) => toast.error(e.response?.data?.message || 'Xato'),
   });
 
+  const unlinkMutation = useMutation({
+    mutationFn: (id) => api.delete(`/leads/${id}/convert`),
+    onSuccess: () => { invalidate(); toast.success('Bog\'lanish uzildi'); },
+    onError: (e) => toast.error(e.response?.data?.message || 'Xato'),
+  });
+
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!form.name.trim()) return toast.error('Ismni kiriting');
@@ -108,10 +124,13 @@ export default function ManagerLeads() {
           <h1 className="text-2xl font-bold tracking-tight text-gray-800 dark:text-white">Lidlar</h1>
           <p className="mt-0.5 text-sm text-gray-500">Kelgan mijozlarni kuzatib boring</p>
         </div>
-        <button type="button" onClick={() => setModalOpen(true)}
-          className="btn-primary flex items-center gap-2 focus-visible:ring-2 focus-visible:ring-primary/40">
-          <Plus size={15} /> Lid qo'shish
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <BranchSelect />
+          <button type="button" onClick={() => setModalOpen(true)}
+            className="btn-primary flex items-center gap-2 focus-visible:ring-2 focus-visible:ring-primary/40">
+            <Plus size={15} /> Lid qo'shish
+          </button>
+        </div>
       </header>
 
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -211,7 +230,29 @@ export default function ManagerLeads() {
                 </button>
               </div>
 
-              <div className="mt-3 flex flex-wrap gap-1.5 border-t border-gray-100 pt-3 dark:border-gray-800">
+              {lead.student && (
+                <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-green-50 px-3 py-2 dark:bg-green-500/10">
+                  <GraduationCap size={14} aria-hidden="true" className="flex-shrink-0 text-green-600 dark:text-green-400" />
+                  <p className="min-w-0 flex-1 text-xs text-green-800 dark:text-green-300">
+                    <span className="font-semibold">{lead.student.name}</span>
+                    <span className="opacity-70"> — {lead.student.username}</span>
+                    {lead.student.group && <span className="opacity-70"> • {lead.student.group.name}</span>}
+                  </p>
+                  <button type="button" onClick={() => unlinkMutation.mutate(lead.id)}
+                    disabled={unlinkMutation.isPending}
+                    className="btn-ghost flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-green-700 hover:bg-green-100 disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-green-300 dark:text-green-300 dark:hover:bg-green-500/20">
+                    <Link2Off size={12} /> Uzish
+                  </button>
+                </div>
+              )}
+
+              <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-gray-100 pt-3 dark:border-gray-800">
+                {!lead.student && (
+                  <button type="button" onClick={() => setConvertLead(lead)}
+                    className="mr-1 flex items-center gap-1 rounded-lg bg-primary/10 px-2 py-1 text-xs font-semibold text-primary transition-colors hover:bg-primary/20 focus-visible:ring-2 focus-visible:ring-primary/40">
+                    <GraduationCap size={12} /> O'quvchiga qo'shish
+                  </button>
+                )}
                 {STATUSES.filter(s => s.value !== lead.status).map(s => (
                   <button key={s.value} type="button"
                     onClick={() => statusMutation.mutate({ id: lead.id, status: s.value })}
@@ -225,6 +266,13 @@ export default function ManagerLeads() {
           );
         })}
       </ul>
+
+      <AnimatePresence>
+        {convertLead && (
+          <ConvertModal lead={convertLead} branchId={branchId}
+            onClose={() => setConvertLead(null)} onDone={invalidate} />
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {modalOpen && (
@@ -292,6 +340,198 @@ export default function ManagerLeads() {
         )}
       </AnimatePresence>
     </main>
+  );
+}
+
+// Turns a lead into a real student account, or attaches one that already
+// exists. Either way the lead keeps a link to the student, so the CRM can still
+// show where an enrolled student originally came from.
+function ConvertModal({ lead, branchId, onClose, onDone }) {
+  const [mode, setMode] = useState('new');
+  const [groupId, setGroupId] = useState('');
+  const [studentId, setStudentId] = useState('');
+  const [password, setPassword] = useState('');
+  const [created, setCreated] = useState(null);
+  const [copied, setCopied] = useState(false);
+
+  const groupsQuery = useQuery({
+    queryKey: ['groups-for-convert', branchId],
+    queryFn: () => api.get('/groups/all', { params: { branchId: branchId || undefined } })
+      .then(r => r.data?.data || []),
+    enabled: mode === 'new',
+  });
+
+  const studentsQuery = useQuery({
+    queryKey: ['students-for-convert', branchId],
+    queryFn: () => api.get('/users', { params: { role: 'student', branchId: branchId || undefined, perPage: 100 } })
+      .then(r => r.data?.data || []),
+    enabled: mode === 'existing',
+  });
+
+  const convertMutation = useMutation({
+    mutationFn: (payload) => api.post(`/leads/${lead.id}/convert`, payload).then(r => r.data.data),
+    onSuccess: (data) => {
+      onDone();
+      if (data?.credentials) {
+        // Keep the modal open so the credentials can actually be written down.
+        setCreated(data.credentials);
+        toast.success('O\'quvchi yaratildi');
+      } else {
+        toast.success('Lid o\'quvchiga bog\'landi');
+        onClose();
+      }
+    },
+    onError: (e) => toast.error(e.response?.data?.message || 'Bog\'lab bo\'lmadi'),
+  });
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (mode === 'new') {
+      if (!groupId) return toast.error('Guruhni tanlang');
+      return convertMutation.mutate({ groupId, password: password.trim() || undefined });
+    }
+    if (!studentId) return toast.error('O\'quvchini tanlang');
+    return convertMutation.mutate({ studentId });
+  };
+
+  const copyCredentials = async () => {
+    try {
+      await navigator.clipboard.writeText(`Login: ${created.username}\nParol: ${created.password}`);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error('Nusxa olinmadi');
+    }
+  };
+
+  const groups = groupsQuery.data || [];
+  const students = studentsQuery.data || [];
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      transition={{ duration: 0.15 }}
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center"
+      onClick={e => e.target === e.currentTarget && onClose()}
+      onKeyDown={e => e.key === 'Escape' && onClose()}>
+      <motion.div initial={{ scale: 0.97, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.97, y: 12 }}
+        transition={{ duration: 0.18 }}
+        role="dialog" aria-modal="true" aria-labelledby="convert-modal-title"
+        className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl dark:bg-gray-900">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 id="convert-modal-title" className="text-lg font-bold text-gray-800 dark:text-white">
+            {created ? 'O\'quvchi yaratildi' : "O'quvchiga qo'shish"}
+          </h2>
+          <button type="button" onClick={onClose} aria-label="Yopish"
+            className="btn-ghost rounded-lg p-1.5 focus-visible:ring-2 focus-visible:ring-primary/40">
+            <X size={16} />
+          </button>
+        </div>
+
+        {created ? (
+          <div className="space-y-4">
+            <p className="text-sm text-gray-500">
+              <span className="font-semibold text-gray-800 dark:text-white">{lead.name}</span> uchun hisob ochildi.
+              Login va parolni o'quvchiga bering.
+            </p>
+            <dl className="space-y-2 rounded-2xl bg-gray-50 p-4 dark:bg-gray-800">
+              <div className="flex justify-between gap-3 text-sm">
+                <dt className="text-gray-500">Login</dt>
+                <dd className="font-mono font-semibold text-gray-800 dark:text-white">{created.username}</dd>
+              </div>
+              <div className="flex justify-between gap-3 text-sm">
+                <dt className="text-gray-500">Parol</dt>
+                <dd className="font-mono font-semibold text-gray-800 dark:text-white">{created.password}</dd>
+              </div>
+            </dl>
+            <div className="flex gap-3">
+              <button type="button" onClick={copyCredentials}
+                className="btn-ghost flex flex-1 items-center justify-center gap-2 focus-visible:ring-2 focus-visible:ring-primary/40">
+                {copied ? <><Check size={14} /> Nusxa olindi</> : <><Copy size={14} /> Nusxa olish</>}
+              </button>
+              <button type="button" onClick={onClose} className="btn-primary flex-1">Yopish</button>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={submit} className="space-y-4">
+            <p className="text-sm text-gray-500">
+              <span className="font-semibold text-gray-800 dark:text-white">{lead.name}</span> — {lead.phone}
+            </p>
+
+            <div role="tablist" aria-label="Qo'shish usuli" className="flex gap-1.5">
+              {[
+                { key: 'new', label: 'Yangi hisob' },
+                { key: 'existing', label: 'Mavjud o\'quvchi' },
+              ].map(m => (
+                <button key={m.key} type="button" role="tab" aria-selected={mode === m.key}
+                  onClick={() => setMode(m.key)}
+                  className={`flex-1 rounded-xl px-3 py-2 text-xs font-medium transition-all focus-visible:ring-2 focus-visible:ring-primary/40 ${
+                    mode === m.key
+                      ? 'gradient-bg text-white shadow-sm'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400'}`}>
+                  {m.label}
+                </button>
+              ))}
+            </div>
+
+            {mode === 'new' ? (
+              <>
+                <div>
+                  <label htmlFor="convert-group" className="mb-1.5 block text-sm font-medium">Guruh *</label>
+                  <select id="convert-group" value={groupId} onChange={e => setGroupId(e.target.value)}
+                    className="input-field" disabled={groupsQuery.isLoading}>
+                    <option value="">
+                      {groupsQuery.isLoading ? 'Yuklanmoqda...' : 'Guruhni tanlang'}
+                    </option>
+                    {groups.map(g => (
+                      <option key={g.id} value={g.id}>
+                        {g.name}{g.teacher?.name ? ` — ${g.teacher.name}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {!groupsQuery.isLoading && groups.length === 0 && (
+                    <p className="mt-1.5 text-xs text-amber-600">Bu markazda hali guruh yo'q.</p>
+                  )}
+                </div>
+                <div>
+                  <label htmlFor="convert-password" className="mb-1.5 block text-sm font-medium">
+                    Parol <span className="font-normal text-gray-400">(ixtiyoriy)</span>
+                  </label>
+                  <input id="convert-password" value={password} onChange={e => setPassword(e.target.value)}
+                    placeholder="Bo'sh qoldirilsa — telefon raqamning oxirgi 4 raqami"
+                    className="input-field" />
+                </div>
+              </>
+            ) : (
+              <div>
+                <label htmlFor="convert-student" className="mb-1.5 block text-sm font-medium">O'quvchi *</label>
+                <select id="convert-student" value={studentId} onChange={e => setStudentId(e.target.value)}
+                  className="input-field" disabled={studentsQuery.isLoading}>
+                  <option value="">
+                    {studentsQuery.isLoading ? 'Yuklanmoqda...' : 'O\'quvchini tanlang'}
+                  </option>
+                  {students.map(st => (
+                    <option key={st.id} value={st.id}>
+                      {st.name}{st.phone ? ` — ${st.phone}` : ''}
+                    </option>
+                  ))}
+                </select>
+                {!studentsQuery.isLoading && students.length === 0 && (
+                  <p className="mt-1.5 text-xs text-amber-600">Bu markazda o'quvchi topilmadi.</p>
+                )}
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-1">
+              <button type="button" onClick={onClose} className="btn-ghost flex-1">Bekor</button>
+              <button type="submit" disabled={convertMutation.isPending}
+                className="btn-primary flex-1 disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-primary/40">
+                {convertMutation.isPending ? 'Saqlanmoqda...' : "Qo'shish"}
+              </button>
+            </div>
+          </form>
+        )}
+      </motion.div>
+    </motion.div>
   );
 }
 

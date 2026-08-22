@@ -2,12 +2,37 @@ const bcrypt = require('bcryptjs');
 const { prisma } = require('../config/db');
 const { success, error } = require('../utils/apiResponse');
 const { generateUsername, generatePassword, getPhoneCode } = require('../utils/generateCredentials');
-const { getOwnBranchIds } = require('../utils/branchScope');
+const { getOwnBranchIds, resolveBranchScope, userBranchScope } = require('../utils/branchScope');
 
 const safeUser = (u) => {
   if (!u) return null;
   const { passwordHash, refreshTokenHash, ...rest } = u;
   return { ...rest, streak: { current: rest.streakCurrent, longest: rest.streakLongest, lastActiveDate: rest.streakLastDate } };
+};
+
+// Every write against another account must confirm the target sits in one of
+// the caller's centers, otherwise a manager could edit another center's people
+// just by knowing an id. Returns an error message or null.
+const assertUserInScope = async (targetId, user) => {
+  const ownBranchIds = await getOwnBranchIds(user);
+  if (!ownBranchIds) return null;
+  const target = await prisma.user.findUnique({
+    where: { id: targetId },
+    select: {
+      branchId: true,
+      group: { select: { branchId: true } },
+      branches: { select: { id: true } },
+      managedBranches: { select: { id: true } },
+    },
+  });
+  if (!target) return 'User not found';
+  const attached = [
+    target.branchId,
+    target.group?.branchId,
+    ...target.branches.map(b => b.id),
+    ...target.managedBranches.map(b => b.id),
+  ].filter(Boolean);
+  return attached.some(id => ownBranchIds.includes(id)) ? null : 'Forbidden';
 };
 
 const createStudent = async (req, res, next) => {
@@ -19,10 +44,9 @@ const createStudent = async (req, res, next) => {
     const group = await prisma.group.findUnique({ where: { id: groupId } });
     if (!group) return error(res, 'Group not found', 404);
 
-    if (req.user.role === 'reception') {
-      if (!group.branchId) return error(res, 'Forbidden', 403);
-      const branch = await prisma.branch.findUnique({ where: { id: group.branchId }, select: { receptionId: true } });
-      if (!branch || branch.receptionId !== req.user.userId) return error(res, 'Forbidden: not your branch', 403);
+    const ownBranchIds = await getOwnBranchIds(req.user);
+    if (ownBranchIds && (!group.branchId || !ownBranchIds.includes(group.branchId))) {
+      return error(res, 'Forbidden: not your branch', 403);
     }
 
     const last4 = phone.replace(/\D/g, '').slice(-4);
@@ -123,27 +147,28 @@ const getAllUsers = async (req, res, next) => {
     const page = Math.max(1, Number(req.query.page) || 1);
     const perPage = Math.min(100, Math.max(10, Number(req.query.perPage) || 50));
 
+    const { branchIds, forbidden } = await resolveBranchScope(req.user, branchId);
+    if (forbidden) return error(res, 'Bu markaz sizga tegishli emas', 403);
+
+    // Search and branch scope can each produce an OR clause, so they are ANDed
+    // together rather than merged - collapsing them would drop the branch
+    // filter and leak other centers' users.
     const where = {
       ...(role ? { role } : {}),
-      ...(search
-        ? {
-            OR: [
-              { name: { contains: search, mode: 'insensitive' } },
-              { username: { contains: search, mode: 'insensitive' } },
-              { email: { contains: search, mode: 'insensitive' } },
-              { phone: { contains: search, mode: 'insensitive' } },
-            ],
-          }
-        : {}),
+      AND: [
+        userBranchScope(branchIds, role),
+        ...(search
+          ? [{
+              OR: [
+                { name: { contains: search, mode: 'insensitive' } },
+                { username: { contains: search, mode: 'insensitive' } },
+                { email: { contains: search, mode: 'insensitive' } },
+                { phone: { contains: search, mode: 'insensitive' } },
+              ],
+            }]
+          : []),
+      ],
     };
-
-    if (branchId) {
-      if (role === 'manager') {
-        where.managedBranches = { some: { id: branchId } };
-      } else {
-        where.branchId = branchId;
-      }
-    }
 
     const [users, total] = await Promise.all([
       prisma.user.findMany({
@@ -184,6 +209,20 @@ const getUserById = async (req, res, next) => {
       },
     });
     if (!user) return error(res, 'User not found', 404);
+
+    // A user is visible only if they belong to one of the caller's centers,
+    // by whichever route ties them to a branch.
+    const ownBranchIds = await getOwnBranchIds(req.user);
+    if (ownBranchIds) {
+      const attached = [
+        user.branchId,
+        user.group?.branch?.id,
+        ...user.branches.map(b => b.id),
+        ...user.managedBranches.map(b => b.id),
+      ].filter(Boolean);
+      if (!attached.some(id => ownBranchIds.includes(id))) return error(res, 'User not found', 404);
+    }
+
     return success(res, safeUser(user));
   } catch (err) { next(err); }
 };
@@ -205,6 +244,8 @@ const updateUser = async (req, res, next) => {
     const target = await prisma.user.findUnique({ where: { id: req.params.id } });
     if (!target) return error(res, 'User not found', 404);
     if (req.user.role === 'teacher' && target.teacherId !== req.user.userId) return error(res, 'Forbidden', 403);
+    const scopeErr = await assertUserInScope(req.params.id, req.user);
+    if (scopeErr) return error(res, scopeErr, scopeErr === 'Forbidden' ? 403 : 404);
     const user = await prisma.user.update({
       where: { id: req.params.id },
       data: { name, email, isActive, groupId, language, phone, gender, age: age ? Number(age) : null, address },
@@ -225,10 +266,9 @@ const deleteUser = async (req, res, next) => {
     if (req.user.role === 'reception') {
       // Never allow reception to deactivate an admin or another reception account.
       if (target.role !== 'teacher' && target.role !== 'student') return error(res, 'Forbidden', 403);
-      const ownBranchIds = await getOwnBranchIds(req.user);
-      const targetBranchId = target.role === 'teacher' ? target.branchId : target.group?.branchId;
-      if (!targetBranchId || !ownBranchIds.includes(targetBranchId)) return error(res, 'Forbidden', 403);
     }
+    const scopeErr = await assertUserInScope(req.params.id, req.user);
+    if (scopeErr) return error(res, scopeErr, scopeErr === 'Forbidden' ? 403 : 404);
 
     await prisma.user.update({ where: { id: req.params.id }, data: { isActive: false } });
     return success(res, null, 'User deactivated');
@@ -239,6 +279,8 @@ const resetStudentPassword = async (req, res, next) => {
   try {
     const student = await prisma.user.findUnique({ where: { id: req.params.id }, select: { id: true, phone: true, username: true, name: true } });
     if (!student) return error(res, 'Student not found', 404);
+    const scopeErr = await assertUserInScope(req.params.id, req.user);
+    if (scopeErr) return error(res, scopeErr === 'Forbidden' ? 'Forbidden' : 'Student not found', scopeErr === 'Forbidden' ? 403 : 404);
 
     // Default: reset to last 4 digits of phone (the student's memorable password)
     const last4 = (student.phone || '').replace(/\D/g, '').slice(-4);
@@ -273,6 +315,12 @@ const freezeStudent = async (req, res, next) => {
   try {
     const student = await prisma.user.findUnique({ where: { id: req.params.id } });
     if (!student) return error(res, 'Student not found', 404);
+    if (req.user.role !== 'teacher') {
+      const scopeErr = await assertUserInScope(req.params.id, req.user);
+      if (scopeErr) return error(res, scopeErr === 'Forbidden' ? 'Forbidden' : 'Student not found', scopeErr === 'Forbidden' ? 403 : 404);
+    } else if (student.teacherId !== req.user.userId) {
+      return error(res, 'Forbidden', 403);
+    }
     const updated = await prisma.user.update({
       where: { id: req.params.id },
       data: { isFrozen: !student.isFrozen },
@@ -283,8 +331,12 @@ const freezeStudent = async (req, res, next) => {
 
 const getManagers = async (req, res, next) => {
   try {
+    const ownBranchIds = await getOwnBranchIds(req.user);
     const managers = await prisma.user.findMany({
-      where: { role: 'manager' },
+      where: {
+        role: 'manager',
+        ...(ownBranchIds ? { managedBranches: { some: { id: { in: ownBranchIds } } } } : {}),
+      },
       select: { id: true, name: true, username: true, email: true, phone: true, gender: true, age: true, address: true, isActive: true, createdAt: true, lastLogin: true },
       orderBy: { createdAt: 'desc' },
     });
@@ -362,4 +414,18 @@ const getManagerBranches = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-module.exports = { createStudent, createTeacher, createManager, getManagers, updateManager, deleteManager, getManagerBranches, getStudentsByTeacher, getAllUsers, getUserById, updateProfile, updateUser, deleteUser, resetStudentPassword, freezeStudent, changePassword };
+// GET /users/my-branches - the centers the caller may act in, for the branch
+// switcher. Admin gets every active branch.
+const getMyBranchOptions = async (req, res, next) => {
+  try {
+    const ownBranchIds = await getOwnBranchIds(req.user);
+    const branches = await prisma.branch.findMany({
+      where: { isActive: true, ...(ownBranchIds ? { id: { in: ownBranchIds } } : {}) },
+      select: { id: true, name: true, address: true },
+      orderBy: { name: 'asc' },
+    });
+    return success(res, branches);
+  } catch (err) { next(err); }
+};
+
+module.exports = { getMyBranchOptions, createStudent, createTeacher, createManager, getManagers, updateManager, deleteManager, getManagerBranches, getStudentsByTeacher, getAllUsers, getUserById, updateProfile, updateUser, deleteUser, resetStudentPassword, freezeStudent, changePassword };

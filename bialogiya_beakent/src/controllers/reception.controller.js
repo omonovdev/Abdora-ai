@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const { prisma } = require('../config/db');
 const { success, error } = require('../utils/apiResponse');
 const { generateUsername, generatePassword } = require('../utils/generateCredentials');
+const { getOwnBranchIds, resolveBranchScope } = require('../utils/branchScope');
 
 // Reception's ONLY user-management capability: creating teacher accounts.
 // They cannot create students, admins, or other reception accounts.
@@ -25,9 +26,12 @@ const createTeacher = async (req, res, next) => {
 
 const getTeachers = async (req, res, next) => {
   try {
+    const { branchIds, forbidden } = await resolveBranchScope(req.user, req.query.branchId);
+    if (forbidden) return error(res, 'Bu markaz sizga tegishli emas', 403);
     const teachers = await prisma.user.findMany({
-      where: { role: 'teacher' },
-      select: { id: true, name: true, username: true, phone: true, isActive: true, createdAt: true },
+      where: { role: 'teacher', ...(branchIds ? { branchId: { in: branchIds } } : {}) },
+      select: { id: true, name: true, username: true, phone: true, isActive: true, createdAt: true,
+        branch: { select: { id: true, name: true } } },
       orderBy: { createdAt: 'desc' },
     });
     return success(res, teachers);
@@ -39,7 +43,9 @@ const getTeachers = async (req, res, next) => {
 // without opening each one.
 const getGroups = async (req, res, next) => {
   try {
-    const where = req.user.role === 'reception' ? { branch: { receptionId: req.user.userId } } : {};
+    const { branchIds, forbidden } = await resolveBranchScope(req.user, req.query.branchId);
+    if (forbidden) return error(res, 'Bu markaz sizga tegishli emas', 403);
+    const where = branchIds ? { branchId: { in: branchIds } } : {};
     const groups = await prisma.group.findMany({
       where: { ...where, isActive: true },
       select: {
@@ -83,7 +89,8 @@ const getGroups = async (req, res, next) => {
 // (admin sees all, for oversight).
 const getMyBranches = async (req, res, next) => {
   try {
-    const where = req.user.role === 'reception' ? { receptionId: req.user.userId } : {};
+    const ownBranchIds = await getOwnBranchIds(req.user);
+    const where = ownBranchIds ? { id: { in: ownBranchIds } } : {};
     const branches = await prisma.branch.findMany({
       where: { ...where, isActive: true },
       include: {
@@ -119,7 +126,8 @@ const getBranchDetail = async (req, res, next) => {
       },
     });
     if (!branch) return error(res, 'Branch not found', 404);
-    if (req.user.role === 'reception' && branch.receptionId !== req.user.userId) return error(res, 'Forbidden', 403);
+    const ownBranchIds = await getOwnBranchIds(req.user);
+    if (ownBranchIds && !ownBranchIds.includes(branch.id)) return error(res, 'Forbidden', 403);
 
     const studentsCount = await prisma.user.count({
       where: { role: 'student', group: { branchId: branch.id }, isActive: true },
@@ -163,7 +171,8 @@ const updateBranch = async (req, res, next) => {
     const { name, address, studentCapacity } = req.body;
     const branch = await prisma.branch.findUnique({ where: { id: req.params.id } });
     if (!branch) return error(res, 'Branch not found', 404);
-    if (req.user.role === 'reception' && branch.receptionId !== req.user.userId) return error(res, 'Forbidden', 403);
+    const ownBranchIds = await getOwnBranchIds(req.user);
+    if (ownBranchIds && !ownBranchIds.includes(branch.id)) return error(res, 'Forbidden', 403);
 
     const updated = await prisma.branch.update({
       where: { id: req.params.id },
@@ -183,7 +192,8 @@ const deleteBranch = async (req, res, next) => {
   try {
     const branch = await prisma.branch.findUnique({ where: { id: req.params.id } });
     if (!branch) return error(res, 'Branch not found', 404);
-    if (req.user.role === 'reception' && branch.receptionId !== req.user.userId) return error(res, 'Forbidden', 403);
+    const ownBranchIds = await getOwnBranchIds(req.user);
+    if (ownBranchIds && !ownBranchIds.includes(branch.id)) return error(res, 'Forbidden', 403);
 
     await prisma.branch.update({ where: { id: req.params.id }, data: { isActive: false } });
     return success(res, null, 'Branch deleted');

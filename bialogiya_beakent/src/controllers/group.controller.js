@@ -1,16 +1,16 @@
 const { prisma } = require('../config/db');
 const { success, error } = require('../utils/apiResponse');
+const { getOwnBranchIds, resolveBranchScope } = require('../utils/branchScope');
 
 // Reception may only touch groups that belong to one of their own branches
 // (a group with no branch at all is admin-only territory). Returns an error
 // object {message, status} or null if access is fine.
 const assertGroupAccess = async (groupId, user) => {
-  if (user.role !== 'reception') return null;
+  const ownBranchIds = await getOwnBranchIds(user);
+  if (!ownBranchIds) return null;
   const group = await prisma.group.findUnique({ where: { id: groupId }, select: { branchId: true } });
   if (!group) return { message: 'Group not found', status: 404 };
-  if (!group.branchId) return { message: 'Forbidden', status: 403 };
-  const branch = await prisma.branch.findUnique({ where: { id: group.branchId }, select: { receptionId: true } });
-  if (!branch || branch.receptionId !== user.userId) return { message: 'Forbidden', status: 403 };
+  if (!group.branchId || !ownBranchIds.includes(group.branchId)) return { message: 'Forbidden', status: 403 };
   return null;
 };
 
@@ -26,7 +26,8 @@ const createGroup = async (req, res, next) => {
     if (branchId) {
       const branch = await prisma.branch.findUnique({ where: { id: branchId } });
       if (!branch) return error(res, 'Branch not found', 404);
-      if (req.user.role === 'reception' && branch.receptionId !== req.user.userId) {
+      const ownBranchIds = await getOwnBranchIds(req.user);
+      if (ownBranchIds && !ownBranchIds.includes(branchId)) {
         return error(res, 'Forbidden: not your branch', 403);
       }
     }
@@ -69,8 +70,13 @@ const getMyGroups = async (req, res, next) => {
 const getAllGroups = async (req, res, next) => {
   try {
     let where = {};
-    if (req.user.role === 'teacher') where = { teacherId: req.user.userId };
-    else if (req.user.role === 'reception') where = { branch: { receptionId: req.user.userId } };
+    if (req.user.role === 'teacher') {
+      where = { teacherId: req.user.userId };
+    } else {
+      const { branchIds, forbidden } = await resolveBranchScope(req.user, req.query.branchId);
+      if (forbidden) return error(res, 'Bu markaz sizga tegishli emas', 403);
+      if (branchIds) where = { branchId: { in: branchIds } };
+    }
     const groups = await prisma.group.findMany({
       where: { ...where, isActive: true },
       include: { teacher: { select: { id: true, name: true } }, branch: { select: { id: true, name: true } }, students: { select: { id: true, name: true } } },
@@ -144,11 +150,11 @@ const updateGroup = async (req, res, next) => {
     const { name, description, subject, icon, color, isActive, teacherId, branchId,
             monthlyFee, weekDays, startTime, endTime, room, totalLessons, level, startDate } = req.body;
 
-    // If reception is reassigning the group to a different branch, that
-    // branch must also be one of theirs.
-    if (branchId && req.user.role === 'reception') {
-      const branch = await prisma.branch.findUnique({ where: { id: branchId } });
-      if (!branch || branch.receptionId !== req.user.userId) return error(res, 'Forbidden: not your branch', 403);
+    // If the group is being reassigned to a different branch, that branch must
+    // also be one the caller owns.
+    if (branchId) {
+      const ownBranchIds = await getOwnBranchIds(req.user);
+      if (ownBranchIds && !ownBranchIds.includes(branchId)) return error(res, 'Forbidden: not your branch', 403);
     }
 
     const group = await prisma.group.update({
