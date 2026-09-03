@@ -30,3 +30,4 @@ Thumbs.db
 
 # Prisma
 prisma/dev.db
+.env.production

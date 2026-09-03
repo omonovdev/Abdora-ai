@@ -1,0 +1,54 @@
+name: abdora-ai
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: abdora-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      # Pinned explicitly: the postgres:18 image moved its default PGDATA, and
+      # this keeps the volume layout identical to the other stacks on this host.
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./bialogiya_beakent
+    image: abdora-api:latest
+    container_name: abdora-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env.production
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+    volumes:
+      - uploads:/app/uploads
+    ports:
+      - '127.0.0.1:3500:5000'
+
+  web:
+    build:
+      context: ./bialogiya_frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-/api}
+    image: abdora-web:latest
+    container_name: abdora-web
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:3501:80'
+
+volumes:
+  pgdata:
+  uploads:
